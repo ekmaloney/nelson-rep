@@ -15,7 +15,7 @@ library(janitor)
         nelsonos <- read_dta("Data/Nelson_Replication - Oversample B&O - Cleaned.dta")
         
         #didn't get a clean file of this from Emi & Brent
-        nelsonms <- read_dta("Data/Nelson_Replication - Minus Sentence.dta")
+        nelsonms <- readRDS("Data/nelsonms_clean.RDS")
       
         #Lab studies:
         nelsonclean <- read_dta("Data/Nelson_Replication - Cleaned.dta")
@@ -74,17 +74,6 @@ new_data_format <- function(d){
 nelsonrep_long <- new_data_format(nelsonrep)
 nelsonos_long <- new_data_format(nelsonos)
 
-
 #merge deflection information
-nelsonrep1 <- left_join(nelsonrep1, deflection, by = c("Condition", "question"))
-nelsonrep2 <- left_join(nelsonrep2, deflection, by = c("Condition", "question"))
-nelsonrep3 <- left_join(nelsonrep3, deflection, by = c("Condition", "question"))
-nelsonrep4 <- left_join(nelsonrep4, deflection, by = c("Condition", "question"))
-nelsonrep5 <- left_join(nelsonrep5, deflection, by = c("Condition", "question"))
-nelsonrep6 <- left_join(nelsonrep6, deflection, by = c("Condition", "question"))
-
-#join all together
-nelsonrep_long <- rbind(nelsonrep1, nelsonrep2, nelsonrep3, nelsonrep4, nelsonrep5, nelsonrep6)
-
-#save final data
-write.csv(nelsonrep_long, "nelsonrep_em.csv")
+nelsonrep_long <- left_join(nelsonrep_long, deflection, by = c("Condition", "q_num"))
+nelsonos_long <- left_join(nelsonos_long, deflection, by = c("Condition", "q_num"))
