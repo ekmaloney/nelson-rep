@@ -1,0 +1,326 @@
+---
+title: "Analysis"
+author: "Emily Maloney"
+date: "10/15/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Processing Data from Emi and Brent's Nelson Replication Study 
+```{r}
+#libraries
+library(tidyverse)
+library(haven)
+library(naniar)
+library(janitor)
+library(mlogit)
+library(here)
+
+#reading in the different data files
+        #Mturk studies:
+        rep_turk <- read_dta("Data/Nelson_Replication - Complete - Cleaned.dta")
+        os_turk <- read_dta("Data/Nelson_Replication - Oversample B&O - Cleaned.dta")
+        os_turk_dirty <- read_dta("Data/Nelson_Replication - Oversample B&O.dta")
+        
+        #didn't get a clean file of this from Emi & Brent
+        #so this file is one I created through cleaning_ms_data.R file in the data folder
+        ms_turk <- readRDS("Data/nelsonms_lon.RDS")
+      
+        #Lab studies:
+        rep_lab <- read_dta("Data/Nelson_Replication - Cleaned.dta")
+        ic_lab <- read_dta("Data/Nelson_Replication - InClass - Complete - Cleaned.dta")
+        ic_lab <- ic_lab %>% mutate(Educ = SchoolYear)
+        
+        #original Nelson study:
+        nelsonog <- read_dta("Data/Nelson_Original.dta")
+
+        #the deflection of the different sentences
+        deflection <- readxl::read_xlsx("Data/Nelson Deflections Table.xlsx")
+
+#clean names of the deflection file
+deflection <- clean_names(deflection) %>% 
+              mutate(Condition = condition,
+                     q_num = case_when(str_detect(question, "1") ~ 1,
+                                      str_detect(question, "2") ~ 2,
+                                      str_detect(question, "3") ~ 3,
+                                      str_detect(question, "4") ~ 4,
+                                      str_detect(question, "5") ~ 5,
+                                      str_detect(question, "6") ~ 6)) %>% 
+             mutate(def_actor = actor_deflection,
+                    def_behavior = behavior_deflection,
+                    def_object = object_deflection,
+                    Condition = as.factor(Condition)) %>% 
+              select(Condition, question, q_num, event, overall_deflection, def_actor,
+              def_behavior, def_object, abo, a_bo, ab_o) 
+
+
+#function to reshape the data 
+new_data_format <- function(d, t){
+        d <- replace_with_na_all(data = d, condition = ~.x %in% c("."))
+        
+        if(t == "MTurk"){
+          vars_select <- c("MTurkCode", "EndTime", "Attention", "question", "replaced", "Condition",
+                           "idnum", "question", "replaced", "Age", "female", "RBlack", "RWhite", 
+                           "RHispanic", "RNative", "RAsian", "RPacific", "ROther", "Educ",
+                           "Inc", "Home1", "Home2", "Spiritual", "UrbRur", "Region")
+        } else {
+          vars_select <- c("idnum", "question", "replaced", "Age", "female", "RBlack", "RWhite", 
+                           "RHispanic", "RNative", "RAsian", "RPacific", "ROther", "Educ",
+                           "Inc", "Home1", "Home2", "Spiritual", "UrbRur", "Region", "Student", "Condition")
+        }
+        
+        d_new <- d %>% pivot_longer(names_to = "question",
+                              values_to = "replaced",
+                              cols = P2C1Q1A:P2C6Q6O) %>% 
+          select(all_of(vars_select)) %>% 
+          mutate(condq = case_when(str_detect(question, "C1") ~ 1,
+                                   str_detect(question, "C2") ~ 2,
+                                   str_detect(question, "C3") ~ 3,
+                                   str_detect(question, "C4") ~ 4,
+                                   str_detect(question, "C5") ~ 5,
+                                   str_detect(question, "C6") ~ 6),
+                 element_replaced = case_when(str_detect(question, "A") ~ "actor",
+                                              str_detect(question, "B") ~ "behavior",
+                                              str_detect(question, "O") ~ "object"),
+                 q_num = case_when(str_detect(question, "Q1") ~ 1,
+                                   str_detect(question, "Q2") ~ 2,
+                                   str_detect(question, "Q3") ~ 3,
+                                   str_detect(question, "Q4") ~ 4,
+                                   str_detect(question, "Q5") ~ 5,
+                                   str_detect(question, "Q6") ~ 6),
+                 choice_id = paste(idnum, condq, q_num, sep = "_"),
+                 idnum = as.factor(idnum)) %>% 
+          filter(!is.na(replaced)) %>% 
+          mutate(Condition = as.factor(condq))
+      
+        return(d_new)
+}
+
+rep_turk_long <- new_data_format(rep_turk, "MTurk")
+os_turk_long <- new_data_format(os_turk, "MTurk")
+rep_lab_long <- new_data_format(rep_lab, "Lab")
+ic_lab_long <- new_data_format(ic_lab, "Lab")
+
+#merge deflection information
+rep_turk_long <- left_join(rep_turk_long, deflection, by = c("Condition", "q_num"))
+os_turk_long <- left_join(os_turk_long, deflection, by = c("Condition", "q_num"))
+rep_lab_long <- left_join(rep_lab_long, deflection, by = c("Condition", "q_num"))
+ic_lab_long <- left_join(ic_lab_long, deflection, by = c("Condition", "q_num"))
+ms_turk_long <- left_join(ms_turk, deflection, by = c("Condition", "q_num"))
+
+```
+
+
+```{r}
+os_turk_ids <- os_turk %>% select(MTurkCode) %>% mutate(df = "os")
+ms_turk_ids <- ms_turk %>% select(MTurkCode)%>% mutate(df = "ms")
+rep_turk_ids <- rep_turk %>% select(MTurkCode)%>% mutate(df = "rep")
+
+all_ids <- rbind(os_turk_ids, ms_turk_ids, rep_turk_ids)
+
+all_ids %>% count(MTurkCode)
+
+
+
+```
+
+
+```{r}
+glimpse(rep_turk_long)
+```
+
+#MTurk Straight Replication
+
+```{r}
+#getting the data into the format needed for the mlogit package
+rep_turk_long <- as.data.frame(rep_turk_long)
+
+
+#change the data format to what's needed for the mlogit function
+rep_turk_mlog <- dfidx(rep_turk_long, 
+                    varying = 31:33, 
+                    sep = "_",
+                    choice = "element_replaced",
+                    idx = "choice_id")
+
+rep_turk_m1 <- mlogit(formula = element_replaced ~ def | idnum, 
+                      data = rep_turk_mlog)
+
+rep_turk_m2 <- mlogit(formula = element_replaced ~ def | overall_deflection + idnum, 
+                      data = rep_turk_mlog)
+
+summary(rep_turk_m2)
+```
+
+```{r}
+rep_lab_long <- as.data.frame(rep_lab_long)
+
+rep_lab_mlog <- dfidx(rep_lab_long, 
+                    varying = 29:31, 
+                    sep = "_",
+                    choice = "element_replaced",
+                    idx = "choice_id")
+
+
+rep_lab_m1 <- mlogit(formula = element_replaced ~ def | overall_deflection + Condition, 
+                      data = rep_lab_mlog)
+
+summary(rep_lab_m1)
+```
+
+```{r}
+#making visualization
+library(MASS)
+m_coefs <- coef(rep_turk_m2)
+m_vcov <- vcov(rep_turk_m2)
+
+nsim <- 10000
+
+def_series <- rep(rep(c(rep(quantile(rep_turk_mlog$overall_deflection, 0.25), 25),
+                   rep(quantile(rep_turk_mlog$overall_deflection, 0.5), 25),
+                   rep(quantile(rep_turk_mlog$overall_deflection, 0.75), 25),
+                   rep(quantile(rep_turk_mlog$overall_deflection, 0.99), 25)), 10), 75)
+
+samples <- mvrnorm(75000, 
+                   mu = m_coefs,
+                   Sigma = m_vcov) %>% 
+          dplyr::as_tibble() %>% 
+          clean_names() %>% 
+          mutate(a_def = c(rep(seq(from = 0, to = 6, by = 0.25), 1000), 
+                             rep(mean(rep_turk_mlog$def), 50000)),
+                 b_def = c(rep(mean(rep_turk_mlog$def), 25000), 
+                           rep(seq(from = 0, to = 6, by = 0.25), 1000), 
+                           rep(mean(rep_turk_mlog$def), 25000)),
+                 o_def = c(rep(mean(rep_turk_mlog$def), 50000), 
+                             rep(seq(from = 0, to = 6, by = 0.25), 1000)),
+                 def = rep(rep(seq(from = 0, to = 6, by = 0.25), 1000), 3),
+                 which_elem = c(rep("actor", 25000), rep("behavior", 25000), rep("object", 25000)),
+                 overall_deflection = def_series,
+                 idnum = 3) %>% 
+          mutate(theta_actor = a_def*def,
+                 theta_behavior = b_def*def + overall_deflection_behavior*overall_deflection,
+                 theta_object = o_def*def + overall_deflection_object*overall_deflection) %>% 
+          mutate(denom = exp(theta_actor) + exp(theta_behavior) + exp(theta_object),
+                 ev_actor = exp(theta_actor)/denom,
+                 ev_behavior = exp(theta_behavior)/denom,
+                 ev_object = exp(theta_object)/denom) %>% 
+          pivot_longer(cols = ev_actor:ev_object, names_to = "element", 
+                       names_prefix = "ev_", values_to = "ev") %>% 
+          group_by(which_elem, element, def, overall_deflection) %>% 
+          summarise(pt = mean(ev, na.rm = TRUE),
+                    ub = quantile(ev, 0.975, na.rm = TRUE),
+                    lb = quantile(ev, 0.025, na.rm = TRUE))
+
+
+
+p <- ggplot(data = samples, mapping = aes(x = def, y = pt, color = element)) + 
+       geom_point() + geom_line() + geom_linerange(mapping = aes(ymin = lb, ymax = ub)) + 
+       theme_minimal() + 
+        facet_grid(cols = vars(which_elem), rows = vars(overall_deflection)) + 
+       labs(x = "Individual Element Deflection", 
+            y = "Probability of Relabeling",
+            title = "Probability of Relabeling an Element",
+            subtitle = "by the individual element's deflection \n and the overall deflection of the event")
+
+deflection_names <- c("1.76" = "25th % Event Deflection", 
+                      "3.23" = "50th %", 
+                      "4.31" = "75th %", 
+                      "6.53" = "99th %")
+       
+```
+
+```{r}
+
+d <- replace_with_na_all(data = os_turk, condition = ~.x %in% c("."))
+  
+  if(t == "MTurk"){
+    vars_select <- c("MTurkCode", "EndTime", "Attention", "question", "replaced", "Condition",
+                     "idnum", "question", "replaced", "Age", "female", "RBlack", "RWhite", 
+                     "RHispanic", "RNative", "RAsian", "RPacific", "ROther", "Educ",
+                     "Inc", "Home1", "Home2", "Spiritual", "UrbRur", "Region")
+  } else {
+    vars_select <- c("idnum", "question", "replaced", "Age", "female", "RBlack", "RWhite", 
+                     "RHispanic", "RNative", "RAsian", "RPacific", "ROther", "Educ",
+                     "Inc", "Home1", "Home2", "Spiritual", "UrbRur", "Region", "Student", "Condition")
+  }
+
+question_variables <- select(d, starts_with("P2"))
+question_variables <- question_variables %>% select(P2C1Q1A:P2C6Q2O)
+q_names <- variable.names(question_variables)
+  
+  d_new <- d %>% tidyr::pivot_longer(names_to = "question",
+                              values_to = "replaced",
+                              cols = q_names) %>% 
+    select(all_of(vars_select)) %>% 
+    mutate(condq = dplyr::case_when(str_detect(question, "C1") ~ 1,
+                             str_detect(question, "C2") ~ 2,
+                             str_detect(question, "C3") ~ 3,
+                             str_detect(question, "C4") ~ 4,
+                             str_detect(question, "C5") ~ 5,
+                             str_detect(question, "C6") ~ 6),
+           element_replaced = dplyr::case_when(str_detect(question, "A") ~ "actor",
+                                        str_detect(question, "B") ~ "behavior",
+                                        str_detect(question, "O") ~ "object"),
+           q_num = dplyr::case_when(str_detect(question, "Q1") ~ 1,
+                             str_detect(question, "Q2") ~ 2,
+                             str_detect(question, "Q3") ~ 3,
+                             str_detect(question, "Q4") ~ 4,
+                             str_detect(question, "Q5") ~ 5,
+                             str_detect(question, "Q6") ~ 6),
+           choice_id = paste(idnum, condq, q_num, sep = "_"),
+           idnum = as.factor(idnum)) %>% 
+    filter(!is.na(replaced)) %>% 
+    mutate(Condition = as.factor(Condition))
+```
+
+```{r}
+rep_turk_new_var <- rep_turk_long %>% 
+                    mutate(highest_def = case_when(abo == 1 ~ "actor",
+                                                   a_bo == 1 ~ "behavior",
+                                                   ab_o == 1 ~ "object"),
+                           percent_def_a = def_actor/overall_deflection,
+                           percent_def_b = def_behavior/overall_deflection,
+                           percent_def_o = def_behavior/overall_deflection,
+                           percent_def = case_when(highest_def == "actor" ~ 
+                                                     def_actor/overall_deflection,
+                                                   highest_def == "behavior" ~ 
+                                                     def_behavior/overall_deflection,
+                                                   highest_def == "object" ~ 
+                                                     def_object/overall_deflection),
+                           success = if_else(element_replaced == highest_def, 1, 0))
+                    
+```
+
+```{r}
+test_m1 <- glmer(success ~ highest_def + (1 | Condition), data = rep_turk_new_var,
+                 family = binomial)
+
+test_m2 <- glmer(success ~ highest_def + percent_def + (1 | idnum), data = rep_turk_new_var,
+                 family = binomial)
+
+test_m3 <- glmer(success ~ highest_def*percent_def + (1 | idnum), data = rep_turk_new_var,
+                 family = binomial)
+
+test_m4 <- glmer(success ~ highest_def*percent_def_a + (1 | idnum), data = rep_turk_new_var,
+                 family = binomial)
+
+test_m5 <- glmer(success ~ highest_def*percent_def_b + (1 | idnum), data = rep_turk_new_var,
+                 family = binomial)
+
+test_m6 <- glmer(success ~ highest_def*percent_def_o + (1 | idnum), data = rep_turk_new_var,
+                 family = binomial)
+
+summary(test_m6)
+
+plot_model(test_m1, type = c("pred"))
+plot_model(test_m2, type = c("pred"))
+plot_model(test_m3, type = c("int"), mdrt.values = "quart")
+plot_model(test_m4, type = c("int"), mdrt.values = "quart")
+plot_model(test_m5, type = c("int"), mdrt.values = "quart")
+plot_model(test_m6, type = c("int"), mdrt.values = "quart")
+
+```
+

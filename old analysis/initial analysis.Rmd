@@ -1,0 +1,135 @@
+---
+title: "Initial Analysis"
+author: "Emily Maloney"
+date: "July 6, 2019"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, results = 'asis')
+```
+
+## Nelson Replication
+
+This is my first attempt at conducting the analysis for the Nelson replication project. I used the "Nelson_Replication - Complete - Cleaned.dta" from the Box folder, and the number of respondents is 228. I am not sure if this data file includes data from all of the experiments Emi and Brent ran, but I stuck with this file for now because it has the most consistent information across conditions, and I wanted to set up a basic procedure for running and interpreting the models before adding the other data.
+
+What follows are a series of multinomial logit models, evaluating the hypothesis that the element of a situation that has the greatest deflection will be the element that the respondent chooses to relabel. Two separate indicators of the highest deflection element are included:  
+
+1. a binary variable (h) that indicates whether or not the element is the highest deflecting element  
+2. a numeric variable (def) which is the direct amount of deflection that an element contributes to the overall deflection score  
+
+```{r}
+library(mlogit)
+library(tidyverse)
+library(stargazer)
+library(knitr)
+
+nr_em <- read.csv("nelsonrep_em.csv")
+
+#get into format for mlogit package
+nr_em <- nr_em %>% mutate(def.A = actor_deflection,
+                          def.O = object_deflection,
+                          def.B = behavior_deflection,
+                          h.A = abo,
+                          h.B = a_bo,
+                          h.O = ab_o,
+                          white = ifelse(RWhite == 1, 1, 0),
+                          Condition = as.factor(Condition),
+                          idnum = as.factor(idnum),
+                          Educ = as.factor(Educ)) %>%
+                   select(idnum, Condition, question, replaced, Age, white, Educ, Inc, Home1, Home2, Spiritual, UrbRur,
+                          Region, female, def.A, def.B, def.O, h.A, h.B, h.O, overall_deflection)
+
+rep <- mlogit.data(nr_em, shape = "wide", choice = "replaced", 
+                   varying = 15:20, sep = ".", id.var = "idnum", group.var = "Condition",
+                   alt.levels = c("A", "B", "O"))
+rep <- rep %>% replace_na(list(h = 0))
+
+#remove missing values
+rep2 <- rep %>% filter(!is.na(replaced))
+  
+```
+
+###Baseline Model  
+
+The Baseline model investigates the likelihood of replacing the Actor, Behavior, or Object without any predictors.
+
+```{r}
+baseline <- mlogit(replaced ~ 1, rep)
+
+stargazer(baseline, title = "Baseline Model")
+```
+`r library(tidyverse)`
+
+Choosing to replace the actor is the reference category, so interpreting the results of this model indicates that respondents had `r exp(baseline$coefficients[1]) %>% round(digits = 2)` the odds of replacing the behavior as compared to the actor, and `r exp(baseline$coefficients[2]) %>% round(digits = 2)` the odds of replacing the object compared to the actor. Without accounting for any predictors, respondents were more likely to replace the behavior or object than the actor. 
+
+###Models 1-3
+
+The first three models evaluate the relabeling hypothesis without any controls. Model 1 predicts the choice of relabeled element by the binary variable indicating whether or not the variable was the hypothesis, Model 2 predicts the choice of the relabeled element by the numerical deflection score of the highest deflecting element, and Model 3 predicts the relabeled outcome by both of these indicators of the hypothesis. 
+
+
+```{r, results = 'asis'}
+m1 <- mlogit(replaced ~ 1 | h, rep)
+m2 <- mlogit(replaced ~ 1 | def, rep)
+m3 <- mlogit(replaced ~ 1 | h + def, rep)
+
+#summary(m1)
+
+stargazer(m1, m2, m3, title = "Baseline Hypothesis Models", order = c(1, 3, 5, 2, 4, 6))
+
+```
+
+Interestingly, the effects across models are not consistent. Because of this, I will focus on Model 3, which has the most information. The coefficient for h for both the model evaluating relabeling the Behavior versus the Actor and the model assessing the likelihood of relabeling the Object versus the Behavior is positive and significant. This means that a respondent has `r exp(m3$coefficients[3]) %>% round(digits = 2)` the odds of relabeling the Behavior versus the Actor when the Behavior contibutes the most to the deflection, and a respondent has `r exp(m3$coefficients[4]) %>% round(digits = 2)` the odds of relabeling the Object versus the Actor when the Object contributes the most to the deflection, holding everything else constant.  
+
+Second, the signs of the deflection coefficient for the Behavior and Object models are different - when the deflection increases by a point in the Behavior, the respondent has a higher relative chance of choosing to relabel it as compared to the Actor. On the other hand, if the deflection contributed by the Object increases by a point, the respondent has a lower relative chance of relabeling it compared to the Actor.  
+  
+  
+However, these effects are all relative to the reference category of relabeling the Actor. The marginal effects for the binary indicator of the hypothesis and the numerical deflection for model 3 are displayed below. 
+
+```{r}
+z <- with(rep2, data.frame(def = tapply(def, index(m3)$alt, mean),
+                           h = tapply(h, index(m3)$alt, mean)))
+
+
+me_m3 <- effects(m3, covariate = "h", data = z)
+me_m3 <- as.data.frame(me_m3)
+colnames(me_m3) <- c("Hypothesis")
+
+me_m3_d <- effects(m3, covariate = "def", data = z)
+me_m3_d <- as.data.frame(me_m3_d)
+colnames(me_m3_d) <- c("Deflection")
+
+me <- cbind(me_m3, me_m3_d)
+
+kable(me, caption = "Marginal Effects", digits = 3)
+```
+
+The marginal effect of being the highest deflecting element is positive for both the Behavior and the Object, but negative for the Actor. This lends some credence to the idea that the actor's identity is "stickier" than the other two. Similarly, the higher the deflection score of the highest deflecting element, the lower the likelihood of changing either the Actor or the Object, but the higher likelihood of changing the Behavior. 
+
+###Fixed Effects Models 
+
+Models 4 and 5 add further predictors to the model, namely the overall deflection produced by the situation as a choice specific variable, and the condition (M3) or the respondent (M4) as dummy variables to control for condition-specific differences and individual-specific differences. The fixed effects were excluded from the table for ease of interpreting the table.  
+
+```{r}
+m4 <- mlogit(replaced ~ -1 | def + h + overall_deflection + Condition, rep)
+
+m5 <- mlogit(replaced ~ -1 | def + h + overall_deflection + idnum, rep)
+
+stargazer(m4, m5, title = "Condition and Individual Fixed Effects", omit = c("Condition", "idnum"),
+          order = c(1, 3, 5, 7, 2, 4, 6, 8))
+```
+
+-- having trouble getting R to compute the marginal effects when fixed effects are included - will move this over to stata for the rest
+
+###Model 5
+
+In Model 5, demographic variables are included - gender, age, race (binary white or non-white), education as a factor variable, and income as a factor variable. 
+
+```{r}
+m5 <- mlogit(replaced ~ 1 | def + h + overall_deflection + female + Age + white + Educ + Inc, rep)
+
+stargazer(m5, title = "Model 5: Demographic Characteristics")
+
+```
+
+

@@ -1,0 +1,45 @@
+---
+title: "Untitled"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(targets)
+
+tar_load(c(rep_turk_id_plot, rep_turk_cond_plot, os_turk_id_plot, os_turk_cond_plot, ic_id_plot,
+           ic_cond_plot))
+```
+
+title = "Probability of Relabeling an Element",
+         subtitle = "by the individual element's deflection \n and the overall deflection of the event",
+
+```{r}
+library(patchwork)
+rep_turk_id_plot + rep_turk_cond_plot +
+ic_id_plot + ic_cond_plot
+```
+
+```{r}
+rep_turk_cond_plot
+```
+
+```{r}
+os_turk_id_plot
+```
+
+```{r}
+os_turk_cond_plot
+```
+
+```{r}
+ic_id_plot
+```
+
+```{r}
+ic_cond_plot
+```
+
